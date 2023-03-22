@@ -18,6 +18,28 @@ const (
 	ConfigUnmarshalError    = "C000002"
 )
 
+var (
+	defaultPgConf = &PgConfig{
+		DbHost:                "localhost",
+		DbPort:                5432,
+		DbSchema:              "public",
+		DbName:                "gorealestate",
+		DbUser:                "postgres",
+		MinConns:              10,
+		MaxConns:              100,
+		MaxConnIdleTime:       10 * time.Minute,
+		MaxConnLifetime:       30 * time.Minute,
+		MaxConnLifetimeJitter: 1 * time.Minute,
+		HealthCheckPeriod:     1 * time.Minute,
+	}
+
+	defaultZapConf = &LoggerConfig{
+		ConsoleLogLevel: "info",
+		FileLogLevel:    "info",
+		EncoderConfig:   getLogEncoder(),
+	}
+)
+
 type AppConfig struct {
 	pgConfig     *PgConfig
 	loggerConfig *LoggerConfig
@@ -45,8 +67,8 @@ type LoggerConfig struct {
 	EncoderConfig   zapcore.EncoderConfig
 }
 
-func New(envFile string) (*AppConfig, *e.ErrorData) {
-	encoder := zapcore.EncoderConfig{
+func getLogEncoder() zapcore.EncoderConfig {
+	return zapcore.EncoderConfig{
 		TimeKey:       "ts",
 		LevelKey:      "level",
 		NameKey:       "logger",
@@ -71,23 +93,10 @@ func New(envFile string) (*AppConfig, *e.ErrorData) {
 		EncodeDuration: zapcore.SecondsDurationEncoder,
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
-	pgconf := &PgConfig{
-		DbHost:                "localhost",
-		DbPort:                5432,
-		DbSchema:              "public",
-		DbName:                "gorealestate",
-		DbUser:                "postgres",
-		MinConns:              10,
-		MaxConns:              100,
-		MaxConnIdleTime:       10 * time.Minute,
-		MaxConnLifetime:       30 * time.Minute,
-		MaxConnLifetimeJitter: 1 * time.Minute,
-		HealthCheckPeriod:     1 * time.Minute,
-	}
-	zapconf := &LoggerConfig{
-		ConsoleLogLevel: "info",
-		FileLogLevel:    "info",
-	}
+}
+
+func New(envFile string) (*AppConfig, *e.ErrorData) {
+	var pgconf, zapconf = defaultPgConf, defaultZapConf
 	viper.SetConfigFile(envFile)
 	viper.SetConfigType("env")
 	if err := viper.ReadInConfig(); err != nil {
@@ -125,7 +134,6 @@ func New(envFile string) (*AppConfig, *e.ErrorData) {
 		pgConfig:     pgconf,
 		loggerConfig: zapconf,
 	}
-	c.loggerConfig.EncoderConfig = encoder
 	return c, nil
 }
 
@@ -145,14 +153,15 @@ func (c *AppConfig) GetLoggerConfig() *LoggerConfig {
 }
 
 func (p *PgConfig) ToConnString() string {
-	//urlExample := postgres://username:password@localhost:5432/database_name
+	//urlExample := postgres://username:password@localhost:5432/database_name?search_path=myschema
 	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s",
+		"postgres://%s:%s@%s:%d/%s?search_path=%s",
 		p.DbUser,
 		p.DbPass,
 		p.DbHost,
 		p.DbPort,
 		p.DbName,
+		p.DbSchema,
 	)
 }
 

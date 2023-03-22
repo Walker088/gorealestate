@@ -24,6 +24,7 @@ type PgPool struct {
 }
 
 func New(config *config.PgConfig, logger *zap.SugaredLogger) (*PgPool, *e.ErrorData) {
+
 	poolConf, err := pgxpool.ParseConfig(config.ToConnString())
 	if err != nil {
 		return nil, e.NewErrorData(
@@ -51,7 +52,7 @@ func New(config *config.PgConfig, logger *zap.SugaredLogger) (*PgPool, *e.ErrorD
 			nil,
 		)
 	}
-	logger.Debugf("PGX connection pool initialized on %s", poolConf.ConnString())
+	logger.Debugf("pgx connection pool initialized on %s", poolConf.ConnString())
 	return &PgPool{
 		pool:   pool,
 		logger: logger,
@@ -60,7 +61,7 @@ func New(config *config.PgConfig, logger *zap.SugaredLogger) (*PgPool, *e.ErrorD
 
 func (p *PgPool) ShutDownPool() {
 	p.pool.Close()
-	p.logger.Debug("PGX connection pool shutted down")
+	p.logger.Debug("pgx connection pool shutted down")
 }
 
 func (p *PgPool) GetPool() *pgxpool.Pool {

@@ -1,8 +1,11 @@
 package plvr
 
 import (
+	"context"
 	"fmt"
+	"math/rand"
 	"os"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -12,42 +15,57 @@ import (
 
 const (
 	apiUrl    = "https://plvr.land.moi.gov.tw/DownloadSeason?season=%sS%s&type=zip&fileName=lvr_landcsv.zip"
+	startDate = "2013-01-01"
 	storePath = "downloaded/plvr"
 	storeName = "lvr_landcsv.zip"
 )
 
 type PlvrCrawler struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
 	workingDir string
 	logger     *zap.SugaredLogger
 	pool       *database.PgPool
+	ResultsCh  chan string
 }
 
-func New(workingDir string, logger *zap.SugaredLogger, pool *database.PgPool) *PlvrCrawler {
+func New(ctx context.Context, cancel context.CancelFunc, rootDir string, logger *zap.SugaredLogger, pool *database.PgPool) *PlvrCrawler {
 	return &PlvrCrawler{
-		workingDir: workingDir,
+		ctx:        ctx,
+		cancel:     cancel,
+		workingDir: fmt.Sprintf("%s/%s", rootDir, storePath),
 		logger:     logger,
 		pool:       pool,
+		ResultsCh:  make(chan string, 10),
 	}
 }
 
-func (p *PlvrCrawler) Run() {
-	p.logger.Infof("Start crawlering %s", apiUrl)
-	start, _ := time.Parse(time.DateOnly, "2013-01-01")
+func (p *PlvrCrawler) Start() {
+	p.logger.Infof("start crawlering %s", apiUrl)
+
+	start, _ := time.Parse(time.DateOnly, startDate)
 	today := time.Now()
+
 	for yearSeason := start; yearSeason.Before(today); yearSeason = yearSeason.AddDate(0, 3, 0) {
 		season := p.monthToSeason(int(yearSeason.Month()))
 		query := fmt.Sprintf("%dS%d", p.commonToRocEra(yearSeason.Year()), season)
 
-		storePath := fmt.Sprintf("%s/%s/%s", storePath, query, storeName)
-		if exists, _ := p.fileExists(storePath); !exists {
+		zipPath := fmt.Sprintf("%s/%s/%s", p.workingDir, query, storeName)
+		if exists, _ := p.fileExists(zipPath); !exists {
+			p.wg.Add(1)
 			go p.download(query)
-			time.Sleep(3 * time.Second)
 		}
 	}
+
+	p.wg.Wait()
+	close(p.ResultsCh)
+	p.cancel()
 }
 
 func (p *PlvrCrawler) Stop() {
-	p.logger.Infof("Stop crawlering %s", apiUrl)
+	p.logger.Infof("stop crawlering %s", apiUrl)
 }
 
 func (p *PlvrCrawler) fileExists(path string) (bool, error) {
@@ -79,7 +97,17 @@ func (p *PlvrCrawler) monthToSeason(month int) int {
 }
 
 func (p *PlvrCrawler) download(yearSeason string) {
-	p.logger.Info(yearSeason)
+	defer p.wg.Done()
+
+	r := rand.Intn(10)
+	select {
+	case <-p.ctx.Done():
+		p.logger.Debugf("download terminated %s", yearSeason)
+		return
+	case <-time.After(time.Duration(r) * time.Second):
+
+		p.ResultsCh <- yearSeason
+	}
 }
 
 //func (p *PlvrCrawler) unzip() {}

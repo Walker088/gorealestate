@@ -1,6 +1,6 @@
 package crawler
 
 type Crawler interface {
-	Run()
+	Start()
 	Stop()
 }
