@@ -9,28 +9,35 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
 	e "github.com/Walker088/gorealestate/error"
+	"github.com/gocarina/gocsv"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
-	currentPackage            = "github.com/Walker088/gorealestate/crawler/plvr"
 	HttpStatusError           = "PV00001"
 	CreateZipFileError        = "PV00002"
 	CopyZipContentToFileError = "PV00003"
 	OpenZippedFileError       = "PV00004"
 	ReadZippedFileError       = "PV00005"
 	CheckRecordExistsError    = "PV00006"
+	HttpRequestError          = "PV00007"
+	ReadZipFileFromLocalError = "PV00008"
+	CreateZipReaderError      = "PV00009"
+	UnmarshalCsvError         = "PV00010"
 
-	apiUrl    = "https://plvr.land.moi.gov.tw/DownloadSeason?season=%s&type=zip&fileName=lvr_landcsv.zip"
-	startDate = "2013-01-01"
-	storePath = "downloaded/plvr"
-	storeName = "lvr_landcsv.zip"
+	currentPackage = "github.com/Walker088/gorealestate/crawler/plvr"
+	apiUrl         = "https://plvr.land.moi.gov.tw/DownloadSeason?season=%s&type=zip&fileName=lvr_landcsv.zip"
+	startDate      = "2013-01-01"
+	storePath      = "downloaded/plvr"
+	storeName      = "lvr_landcsv.zip"
 )
 
 type PlvrCrawler struct {
@@ -52,7 +59,7 @@ func New(ctx context.Context, cancel context.CancelFunc, rootDir string, logger 
 		workingDir: fmt.Sprintf("%s/%s", rootDir, storePath),
 		logger:     logger,
 		pool:       pool,
-		ResultsCh:  make(chan string, 10),
+		ResultsCh:  make(chan string),
 		ErrorsCh:   make(chan *e.ErrorData),
 	}
 }
@@ -80,18 +87,17 @@ func (p *PlvrCrawler) Start() {
 
 	for yearSeason := start; yearSeason.Before(today); yearSeason = yearSeason.AddDate(0, 3, 0) {
 		season := monthToSeason(int(yearSeason.Month()))
-		query := fmt.Sprintf("%dS%d", commonToRocEra(yearSeason.Year()), season)
+		yearSeason := fmt.Sprintf("%dS%d", commonToRocEra(yearSeason.Year()), season)
 
-		os.MkdirAll(fmt.Sprintf("%s/%s", p.workingDir, query), 0644)
-		zipPath := fmt.Sprintf("%s/%s/%s", p.workingDir, query, storeName)
+		os.MkdirAll(fmt.Sprintf("%s/%s", p.workingDir, yearSeason), 0644)
+		zipFilePath := fmt.Sprintf("%s/%s/%s", p.workingDir, yearSeason, storeName)
 
 		p.wg.Add(1)
-		go p.crawl(query, zipPath)
+		go p.crawl(yearSeason, zipFilePath)
 		break
 	}
 
 	p.wg.Wait()
-	close(p.ResultsCh)
 	p.cancel()
 }
 
@@ -99,30 +105,19 @@ func (p *PlvrCrawler) Stop() {
 	p.logger.Infof("stop crawlering %s", apiUrl)
 }
 
-func (p *PlvrCrawler) fileExists(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true, nil
+func (p *PlvrCrawler) crawl(yearSeason string, zipFilePath string) {
+	recordExists := func(yearSeason string) (bool, error) {
+		var exists bool
+		query := `
+		SELECT FALSE
+		`
+		err := p.pool.QueryRow(context.Background(), query /*, yearSeason*/).Scan(&exists)
+		if err != nil {
+			return false, err
+		}
+		return exists, nil
 	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err
-}
 
-func (p *PlvrCrawler) recordExists(yearSeason string) (bool, error) {
-	var exists bool
-	query := `
-	
-	`
-	err := p.pool.QueryRow(context.Background(), query, yearSeason).Scan(&exists)
-	if err != nil {
-		return false, err
-	}
-	return exists, nil
-}
-
-func (p *PlvrCrawler) crawl(yearSeason string, zipFile string) {
 	defer p.wg.Done()
 
 	r := rand.Intn(10)
@@ -131,36 +126,7 @@ func (p *PlvrCrawler) crawl(yearSeason string, zipFile string) {
 		p.logger.Debugf("download terminated %s", yearSeason)
 		return
 	case <-time.After(time.Duration(r) * time.Second):
-		exists, err := p.fileExists(zipFile)
-		if err != nil {
-			p.ErrorsCh <- e.NewErrorData(
-				HttpStatusError,
-				err.Error(),
-				fmt.Sprintf("%s.download", currentPackage),
-				nil,
-				nil,
-			)
-			return
-		}
-		resp, err := http.Get(fmt.Sprintf(apiUrl, yearSeason))
-		if err != nil {
-			fmt.Printf("err: %s", err)
-		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
-		if resp.StatusCode != 200 {
-			var inner interface{}
-			inner = fmt.Sprintf("[%d] body %s", resp.StatusCode, string(body))
-			p.ErrorsCh <- e.NewErrorData(
-				HttpStatusError,
-				err.Error(),
-				fmt.Sprintf("%s.download", currentPackage),
-				nil,
-				&inner,
-			)
-			return
-		}
-		hasRecord, err := p.recordExists(yearSeason)
+		hasRecord, err := recordExists(yearSeason)
 		if err != nil {
 			p.ErrorsCh <- e.NewErrorData(
 				CheckRecordExistsError,
@@ -172,29 +138,102 @@ func (p *PlvrCrawler) crawl(yearSeason string, zipFile string) {
 			return
 		}
 		if !hasRecord {
-			zipReader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
-			if err != nil {
-				p.ErrorsCh <- e.NewErrorData(
-					CopyZipContentToFileError,
-					err.Error(),
-					fmt.Sprintf("%s.download", currentPackage),
-					nil,
-					nil,
-				)
+			zipReader, errorData := p.readZipFile(yearSeason, zipFilePath)
+			if errorData != nil {
+				p.ErrorsCh <- errorData
 				return
 			}
 			if err := p.exportZipToDb(zipReader); err != nil {
 				p.ErrorsCh <- err
 				return
 			}
+			p.ResultsCh <- yearSeason
 		}
-		p.ResultsCh <- yearSeason
+	}
+}
+
+func (p *PlvrCrawler) readZipFile(yearSeason string, zipFilePath string) (*zip.Reader, *e.ErrorData) {
+	fileExists := func(path string) (bool, error) {
+		_, err := os.Stat(path)
+		if err == nil {
+			return true, nil
+		}
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	exists, _ := fileExists(zipFilePath)
+	if exists {
+		p.logger.Debugf("found downloaded zip file %s", zipFilePath)
+		zipBytes, err := os.ReadFile(zipFilePath)
+		if err != nil {
+			return nil, e.NewErrorData(
+				ReadZipFileFromLocalError,
+				err.Error(),
+				fmt.Sprintf("%s.readZipFile", currentPackage),
+				nil,
+				nil,
+			)
+		}
+		zipReader, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+		if err != nil {
+			return nil, e.NewErrorData(
+				CreateZipReaderError,
+				err.Error(),
+				fmt.Sprintf("%s.readZipFile", currentPackage),
+				nil,
+				nil,
+			)
+		}
+		return zipReader, nil
+	} else {
+		remoteZip := fmt.Sprintf(apiUrl, yearSeason)
+		p.logger.Debugf("zip file not found, trying to download it from %s", remoteZip)
+		resp, err := http.Get(remoteZip)
+		if err != nil {
+			return nil, e.NewErrorData(
+				HttpRequestError,
+				err.Error(),
+				fmt.Sprintf("%s.readZipFile", currentPackage),
+				nil,
+				nil,
+			)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			var inner interface{} = fmt.Sprintf("[%d] body %s", resp.StatusCode, string(body))
+			return nil, e.NewErrorData(
+				HttpStatusError,
+				err.Error(),
+				fmt.Sprintf("%s.readZipFile", currentPackage),
+				nil,
+				&inner,
+			)
+		}
+		zipReader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+		if err != nil {
+			return nil, e.NewErrorData(
+				CopyZipContentToFileError,
+				err.Error(),
+				fmt.Sprintf("%s.readZipFile", currentPackage),
+				nil,
+				nil,
+			)
+		}
+		return zipReader, nil
 	}
 }
 
 func (p *PlvrCrawler) exportZipToDb(zip *zip.Reader) *e.ErrorData {
+	r := regexp.MustCompile(`^[a-z]_lvr_land_[a-c]\.csv$`)
 	for _, zf := range zip.File {
 		fileName := zf.FileHeader.Name
+		if !r.MatchString(fileName) {
+			p.logger.Debugf("file %s is omitted", fileName)
+			continue
+		}
 		f, err := zf.Open()
 		if err != nil {
 			return e.NewErrorData(
@@ -216,8 +255,28 @@ func (p *PlvrCrawler) exportZipToDb(zip *zip.Reader) *e.ErrorData {
 				nil,
 			)
 		}
+		head := strings.Split(string(content), "\n")[1:2]
+		body := strings.Split(string(content), "\n")[2:]
+		csvBytes := head[0] + "\n" + strings.Join(body, "\n")
+
+		p.logger.Debugf("Opened file %s", fileName)
+		p.parse([]byte(csvBytes))
 	}
 	return nil
 }
 
-//func (p *PlvrCrawler) parse() {}
+func (p *PlvrCrawler) parse(csvBytes []byte) ([]*RealEstateItem, *e.ErrorData) {
+	items := []*RealEstateItem{}
+
+	if err := gocsv.UnmarshalBytes(csvBytes, &items); err != nil {
+		return nil, e.NewErrorData(
+			UnmarshalCsvError,
+			err.Error(),
+			fmt.Sprintf("%s.parse", currentPackage),
+			nil,
+			nil,
+		)
+	}
+
+	return items, nil
+}

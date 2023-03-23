@@ -25,7 +25,7 @@ func main() {
 	c, err := config.New(fmt.Sprintf("%s/%s", rootDir, envFile))
 	if err != nil {
 		fmt.Println(err.ToString())
-		os.Exit(1)
+		panic(err)
 	}
 	l := logger.New(c.GetLoggerConfig())
 	defer l.Sync()
@@ -55,14 +55,16 @@ func main() {
 	for {
 		select {
 		case <-deadlineChannel:
-			l.Info("Interrupt signal received")
+			l.Info("interrupt signal received")
 			crawler.Stop()
 			return
 		case <-ctx.Done():
-			l.Infof("Download finished")
+			l.Infof("download finished")
 			return
+		case err := <-crawler.ErrorsCh:
+			l.Infof("[main] error occurred: %s", err)
 		case downloaded := <-crawler.ResultsCh:
-			l.Infof("[main] Downloaded: %s", downloaded)
+			l.Infof("[main] downloaded: %s", downloaded)
 		}
 	}
 

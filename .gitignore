@@ -1,5 +1,6 @@
 .env.development
 logs
+downloaded
 
 # Binaries for programs and plugins
 *.exe
