@@ -50,7 +50,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	crawler := plvr.New(ctx, cancel, rootDir, l, pool)
+	crawler := plvr.New(ctx, cancel, rootDir, l, pool.GetPool())
 	go crawler.Start()
 	for {
 		select {
