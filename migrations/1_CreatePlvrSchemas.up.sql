@@ -187,3 +187,8 @@ CREATE TABLE IF NOT EXISTS plvr_land_parse_failed (
   elevator TEXT,
   transaction_identifier TEXT
 );
+
+CREATE TABLE IF NOT EXISTS plvr_download_history (
+  remote_addr     TEXT PRIMARY KEY,
+  downloaded_time TIMESTAMP WITH TIME ZONE
+);

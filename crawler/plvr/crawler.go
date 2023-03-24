@@ -109,9 +109,9 @@ func (p *PlvrCrawler) crawl(yearSeason string, zipFilePath string) {
 	recordExists := func(yearSeason string) (bool, error) {
 		var exists bool
 		query := `
-		SELECT FALSE
+		SELECT EXISTS(SELECT 1 FROM plvr_download_history WHERE remote_addr = $1)
 		`
-		err := p.pool.QueryRow(context.Background(), query /*, yearSeason*/).Scan(&exists)
+		err := p.pool.QueryRow(context.Background(), query, fmt.Sprintf(apiUrl, yearSeason)).Scan(&exists)
 		if err != nil {
 			return false, err
 		}
@@ -265,8 +265,8 @@ func (p *PlvrCrawler) exportZipToDb(zip *zip.Reader) *e.ErrorData {
 	return nil
 }
 
-func (p *PlvrCrawler) parse(csvBytes []byte) ([]*RealEstateItem, *e.ErrorData) {
-	items := []*RealEstateItem{}
+func (p *PlvrCrawler) parse(csvBytes []byte) ([]*HouseSaleItem, *e.ErrorData) {
+	items := []*HouseSaleItem{}
 
 	if err := gocsv.UnmarshalBytes(csvBytes, &items); err != nil {
 		return nil, e.NewErrorData(
