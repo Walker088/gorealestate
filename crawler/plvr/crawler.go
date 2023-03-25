@@ -10,14 +10,12 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
 	e "github.com/Walker088/gorealestate/error"
-	"github.com/gocarina/gocsv"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -38,6 +36,13 @@ const (
 	startDate      = "2013-01-01"
 	storePath      = "downloaded/plvr"
 	storeName      = "lvr_landcsv.zip"
+)
+
+var (
+	isTargetFile = regexp.MustCompile(`^[a-z]_lvr_land_[a-c]\.csv$`)
+	isHouseSale  = regexp.MustCompile(`^[a-z]_lvr_land_a\.csv$`)
+	isNewHouse   = regexp.MustCompile(`^[a-z]_lvr_land_b\.csv$`)
+	isRental     = regexp.MustCompile(`^[a-z]_lvr_land_c\.csv$`)
 )
 
 type PlvrCrawler struct {
@@ -227,10 +232,9 @@ func (p *PlvrCrawler) readZipFile(yearSeason string, zipFilePath string) (*zip.R
 }
 
 func (p *PlvrCrawler) exportZipToDb(zip *zip.Reader) *e.ErrorData {
-	r := regexp.MustCompile(`^[a-z]_lvr_land_[a-c]\.csv$`)
 	for _, zf := range zip.File {
 		fileName := zf.FileHeader.Name
-		if !r.MatchString(fileName) {
+		if !isTargetFile.MatchString(fileName) {
 			p.logger.Debugf("file %s is omitted", fileName)
 			continue
 		}
@@ -245,6 +249,7 @@ func (p *PlvrCrawler) exportZipToDb(zip *zip.Reader) *e.ErrorData {
 			)
 		}
 		defer f.Close()
+		p.logger.Debugf("Opened file %s", fileName)
 		content, err := io.ReadAll(f)
 		if err != nil {
 			return e.NewErrorData(
@@ -255,28 +260,47 @@ func (p *PlvrCrawler) exportZipToDb(zip *zip.Reader) *e.ErrorData {
 				nil,
 			)
 		}
-		head := strings.Split(string(content), "\n")[1:2]
-		body := strings.Split(string(content), "\n")[2:]
-		csvBytes := head[0] + "\n" + strings.Join(body, "\n")
-
-		p.logger.Debugf("Opened file %s", fileName)
-		p.parse([]byte(csvBytes))
+		parsedItems, errData := p.parse(fileName, content)
+		if errData != nil {
+			return errData
+		}
+		for _, item := range parsedItems {
+			if errData := item.save(string(fileName[0])); err != nil {
+				return errData
+			}
+		}
 	}
 	return nil
 }
 
-func (p *PlvrCrawler) parse(csvBytes []byte) ([]*HouseSaleItem, *e.ErrorData) {
-	items := []*HouseSaleItem{}
-
-	if err := gocsv.UnmarshalBytes(csvBytes, &items); err != nil {
-		return nil, e.NewErrorData(
-			UnmarshalCsvError,
-			err.Error(),
-			fmt.Sprintf("%s.parse", currentPackage),
-			nil,
-			nil,
-		)
+func (p *PlvrCrawler) parse(fileName string, content []byte) ([]ParsedItem, *e.ErrorData) {
+	var parsedItems []ParsedItem
+	if isHouseSale.MatchString(fileName) {
+		items, err := NewHouseSaleItems(content)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			parsedItems = append(parsedItems, &item)
+		}
 	}
-
-	return items, nil
+	if isNewHouse.MatchString(fileName) {
+		items, err := NewNewHouseItems(content)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			parsedItems = append(parsedItems, &item)
+		}
+	}
+	if isRental.MatchString(fileName) {
+		items, err := NewRentalItems(content)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			parsedItems = append(parsedItems, &item)
+		}
+	}
+	return parsedItems, nil
 }

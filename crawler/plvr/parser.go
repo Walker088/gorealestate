@@ -1,13 +1,35 @@
 package plvr
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
+
+	e "github.com/Walker088/gorealestate/error"
+	"github.com/gocarina/gocsv"
 )
 
+var (
+	cityMap = map[string]string{
+		"a": "Taipei", "b": "Taichung", "c": "Keelung", "d": "Tainan",
+		"e": "Kaohsiung", "f": "New Taipei", "g": "Yilan", "h": "Taoyuan",
+		"j": "Hsinchu Country", "k": "Miaoli", "l": "Taichung Country", "m": "Nantou",
+		"n": "Changhua", "p": "Yunlin", "q": "Chiayi Country", "r": "Tainan County",
+		"s": "Kaohsiung County", "t": "Pingtung", "u": "Hualien", "v": "Taitung",
+		"x": "Penghu", "y": "Yangmingshan", "w": "Kinmen", "z": "Lianjiang",
+		"i": "Chiayi", "o": "Hsinchu",
+	}
+)
+
+type ParsedItem interface {
+	save(string) *e.ErrorData
+	toString(string) string
+}
+
 type HouseSaleItem struct {
-	SerialNumber              string `csv:"編號"`
-	City                      string `csv:"-"`
+	SerialNumber string `csv:"編號"`
+	//City                      string `csv:"-"`
 	District                  string `csv:"鄉鎮市區"`
 	TransactionType           string `csv:"交易標的"`
 	Address                   string `csv:"土地位置建物門牌"`
@@ -42,9 +64,37 @@ type HouseSaleItem struct {
 	TransactionIdentifier     string `csv:"移轉編號"`
 }
 
+func NewHouseSaleItems(csvBytes []byte) ([]HouseSaleItem, *e.ErrorData) {
+	head := strings.Split(string(csvBytes), "\n")[0:1]
+	body := strings.Split(string(csvBytes), "\n")[2:]
+	cleaned := head[0] + "\n" + strings.Join(body, "\n")
+
+	items := []HouseSaleItem{}
+
+	if err := gocsv.UnmarshalBytes([]byte(cleaned), &items); err != nil {
+		return nil, e.NewErrorData(
+			UnmarshalCsvError,
+			err.Error(),
+			fmt.Sprintf("%s.parse", currentPackage),
+			nil,
+			nil,
+		)
+	}
+	return items, nil
+}
+func (h *HouseSaleItem) save(city string) *e.ErrorData {
+	return nil
+}
+func (h *HouseSaleItem) toString(cityCode string) string {
+	city := cityMap[cityCode]
+	return fmt.Sprintf(`
+	[HouseSaleItem] [%s] City=%s District=%s TransacType=%s TransacDate=%s
+	`, h.SerialNumber, city, h.District, h.TransactionType, h.TransactionDate)
+}
+
 type NewHouseItem struct {
-	SerialNumber              string `csv:"serial number"`
-	City                      string `csv:"-"`
+	SerialNumber string `csv:"serial number"`
+	//City                      string `csv:"-"`
 	District                  string `csv:"The villages and towns urban district"`
 	TransactionType           string `csv:"transaction sign"`
 	Address                   string `csv:"land sector position building sector house number plate"`
@@ -74,9 +124,37 @@ type NewHouseItem struct {
 	Notes                     string `csv:"the note"`
 }
 
+func NewNewHouseItems(csvBytes []byte) ([]NewHouseItem, *e.ErrorData) {
+	head := strings.Split(string(csvBytes), "\n")[1:2]
+	body := strings.Split(string(csvBytes), "\n")[2:]
+	cleaned := head[0] + "\n" + strings.Join(body, "\n")
+
+	items := []NewHouseItem{}
+
+	if err := gocsv.UnmarshalBytes([]byte(cleaned), &items); err != nil {
+		return nil, e.NewErrorData(
+			UnmarshalCsvError,
+			err.Error(),
+			fmt.Sprintf("%s.parse", currentPackage),
+			nil,
+			nil,
+		)
+	}
+	return items, nil
+}
+func (n *NewHouseItem) save(city string) *e.ErrorData {
+	return nil
+}
+func (n *NewHouseItem) toString(cityCode string) string {
+	city := cityMap[cityCode]
+	return fmt.Sprintf(`
+	[NewHouseItem] [%s] City=%s District=%s TransacType=%s TransacDate=%s
+	`, n.SerialNumber, city, n.District, n.TransactionType, n.TransactionDate)
+}
+
 type RentalItem struct {
-	SerialNumber              string `csv:"serial number"`
-	City                      string `csv:"-"`
+	SerialNumber string `csv:"serial number"`
+	//City                      string `csv:"-"`
 	District                  string `csv:"The villages and towns urban district"`
 	TransactionType           string `csv:"transaction sign"`
 	Address                   string `csv:"land sector position building sector house number plate"`
@@ -105,6 +183,34 @@ type RentalItem struct {
 	ParkingArea               string `csv:"berth shifting total area square meter"`
 	ParkingPrice              string `csv:"the berth total price NTD"`
 	Notes                     string `csv:"the note"`
+}
+
+func NewRentalItems(csvBytes []byte) ([]RentalItem, *e.ErrorData) {
+	head := strings.Split(string(csvBytes), "\n")[1:2]
+	body := strings.Split(string(csvBytes), "\n")[2:]
+	cleaned := head[0] + "\n" + strings.Join(body, "\n")
+
+	items := []RentalItem{}
+
+	if err := gocsv.UnmarshalBytes([]byte(cleaned), &items); err != nil {
+		return nil, e.NewErrorData(
+			UnmarshalCsvError,
+			err.Error(),
+			fmt.Sprintf("%s.parse", currentPackage),
+			nil,
+			nil,
+		)
+	}
+	return items, nil
+}
+func (n *RentalItem) save(city string) *e.ErrorData {
+	return nil
+}
+func (r *RentalItem) toString(cityCode string) string {
+	city := cityMap[cityCode]
+	return fmt.Sprintf(`
+	[RentalItem] [%s] City=%s District=%s TransacType=%s TransacDate=%s
+	`, r.SerialNumber, city, r.District, r.TransactionType, r.TransactionDate)
 }
 
 type DateTime struct {
