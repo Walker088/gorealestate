@@ -149,7 +149,9 @@ func (p *PlvrCrawler) crawl(yearSeason string, zipFilePath string) {
 				return
 			}
 			if err := p.exportZipToDb(zipReader); err != nil {
-				p.ErrorsCh <- err
+				for _, e := range err {
+					p.ErrorsCh <- e
+				}
 				return
 			}
 			p.ResultsCh <- yearSeason
@@ -231,7 +233,8 @@ func (p *PlvrCrawler) readZipFile(yearSeason string, zipFilePath string) (*zip.R
 	}
 }
 
-func (p *PlvrCrawler) exportZipToDb(zip *zip.Reader) *e.ErrorData {
+func (p *PlvrCrawler) exportZipToDb(zip *zip.Reader) []*e.ErrorData {
+	var errors []*e.ErrorData
 	for _, zf := range zip.File {
 		fileName := zf.FileHeader.Name
 		if !isTargetFile.MatchString(fileName) {
@@ -240,67 +243,66 @@ func (p *PlvrCrawler) exportZipToDb(zip *zip.Reader) *e.ErrorData {
 		}
 		f, err := zf.Open()
 		if err != nil {
-			return e.NewErrorData(
+			errors = append(errors, e.NewErrorData(
 				OpenZippedFileError,
 				err.Error(),
 				fmt.Sprintf("%s.exportZipToDb", currentPackage),
 				nil,
 				nil,
-			)
+			))
+			return errors
 		}
 		defer f.Close()
 		p.logger.Debugf("Opened file %s", fileName)
 		content, err := io.ReadAll(f)
 		if err != nil {
-			return e.NewErrorData(
+			errors = append(errors, e.NewErrorData(
 				ReadZippedFileError,
 				err.Error(),
 				fmt.Sprintf("%s.exportZipToDb", currentPackage),
 				nil,
 				nil,
-			)
+			))
+			return errors
 		}
-		parsedItems, errData := p.parse(fileName, content)
+		errData := p.parseAndSave(fileName, content)
 		if errData != nil {
-			return errData
+			errors = append(errors, errData)
 		}
-		for _, item := range parsedItems {
-			if errData := item.save(string(fileName[0])); err != nil {
-				return errData
-			}
-		}
+	}
+	if len(errors) > 0 {
+		return errors
 	}
 	return nil
 }
 
-func (p *PlvrCrawler) parse(fileName string, content []byte) ([]ParsedItem, *e.ErrorData) {
-	var parsedItems []ParsedItem
+func (p *PlvrCrawler) parseAndSave(fileName string, content []byte) *e.ErrorData {
 	if isHouseSale.MatchString(fileName) {
 		items, err := NewHouseSaleItems(content)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, item := range items {
-			parsedItems = append(parsedItems, &item)
+			item.save(p.pool, string(fileName[0]))
 		}
 	}
 	if isNewHouse.MatchString(fileName) {
 		items, err := NewNewHouseItems(content)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, item := range items {
-			parsedItems = append(parsedItems, &item)
+			item.save(p.pool, string(fileName[0]))
 		}
 	}
 	if isRental.MatchString(fileName) {
 		items, err := NewRentalItems(content)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, item := range items {
-			parsedItems = append(parsedItems, &item)
+			item.save(p.pool, string(fileName[0]))
 		}
 	}
-	return parsedItems, nil
+	return nil
 }
